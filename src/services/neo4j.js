@@ -1,12 +1,24 @@
 const neo4j = require('neo4j-driver');
 
-const driver = neo4j.driver(
-  process.env.NEO4J_URI || 'neo4j://localhost:7687',
-  neo4j.auth.basic(
-    process.env.NEO4J_USERNAME || 'neo4j',
-    process.env.NEO4J_PASSWORD || 'password'
-  )
-);
+let driver;
+
+try {
+  driver = neo4j.driver(
+    process.env.NEO4J_URI || 'neo4j://localhost:7687',
+    neo4j.auth.basic(
+      process.env.NEO4J_USERNAME || 'neo4j',
+      process.env.NEO4J_PASSWORD || 'password'
+    ),
+    {
+      maxConnectionPoolSize: 10,
+      connectionTimeout: 30000,
+    }
+  );
+  console.log('Neo4j driver initialized successfully');
+} catch (err) {
+  console.error('Failed to initialize Neo4j driver:', err);
+  driver = null;
+}
 
 function recordToObject(record) {
   const obj = {};
@@ -26,6 +38,9 @@ function recordToObject(record) {
 }
 
 async function createSOSEvent(data) {
+  if (!driver) {
+    throw new Error('Neo4j driver not initialized');
+  }
   const session = driver.session();
   try {
     const result = await session.run(
