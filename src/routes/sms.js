@@ -44,6 +44,22 @@ router.post('/webhook', async (req, res) => {
   }
 });
 
+router.post('/send-alert', async (req, res) => {
+  try {
+    const { sendSimpleSMS } = require('../services/twilio');
+    const { message, phone } = req.body;
+    const targetPhone = phone || process.env.SUPERVISOR_PHONE;
+    if (!targetPhone) {
+      return res.status(400).json({ error: 'No phone number provided or configured' });
+    }
+    const result = await sendSimpleSMS(targetPhone, message);
+    return res.json(result);
+  } catch (err) {
+    console.error('Send alert SMS error:', err);
+    return res.status(500).json({ error: 'Failed to send alert SMS' });
+  }
+});
+
 router.post('/', async (req, res) => {
   return router.handle({ ...req, url: '/webhook' }, res);
 });

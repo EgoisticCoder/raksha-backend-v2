@@ -40,3 +40,7 @@ services:
         sync: false
       - key: SUPERVISOR_PHONE
         sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false

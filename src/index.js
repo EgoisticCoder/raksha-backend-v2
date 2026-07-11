@@ -4,22 +4,27 @@ const http = require('http');
 const cors = require('cors');
 const helmet = require('helmet');
 const compression = require('compression');
-const cron = require('node-cron');
 const { Server } = require('socket.io');
 const { setIO } = require('./utils/socket');
 const { closeDriver } = require('./services/neo4j');
 const { apiKeyAuth } = require('./middleware/auth');
 const { globalLimiter } = require('./middleware/rateLimiter');
+const { authenticateJWT, authorizeRoles, ROLES } = require('./middleware/jwt');
+const { setupScheduledJobs, closeQueuesAndWorkers } = require('./queues');
 
+const authRoutes = require('./routes/auth');
 const sosRoutes = require('./routes/sos');
 const teamsRoutes = require('./routes/teams');
 const sarvamRoutes = require('./routes/sarvam');
 const smsRoutes = require('./routes/sms');
+const adminRoutes = require('./routes/admin');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: '*', methods: ['GET', 'POST'] },
+  pingInterval: 10000,
+  pingTimeout: 5000,
 });
 
 setIO(io);
@@ -35,12 +40,15 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.use('/auth', authRoutes);
+
 app.use(apiKeyAuth);
 
 app.use('/sos', sosRoutes);
 app.use('/teams', teamsRoutes);
 app.use('/sarvam', sarvamRoutes);
 app.use('/sms', smsRoutes);
+app.use('/admin', authenticateJWT, authorizeRoles(ROLES.ADMIN, ROLES.SUPER_ADMIN), adminRoutes);
 
 io.on('connection', (socket) => {
   console.log(`Socket connected: ${socket.id}`);
@@ -57,36 +65,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-if (process.env.ENABLE_IN_PROCESS_CRONS !== 'false') {
-  cron.schedule('*/1 * * * *', async () => {
-    try {
-      const { runAlertAgent } = require('../agents/alertAgent');
-      await runAlertAgent();
-    } catch (err) {
-      console.error('Alert agent cron error:', err);
-    }
-  });
-
-  cron.schedule('*/5 * * * *', async () => {
-    try {
-      const { runResourceAgent } = require('../agents/resourceAgent');
-      await runResourceAgent();
-    } catch (err) {
-      console.error('Resource agent cron error:', err);
-    }
-  });
-
-  cron.schedule('*/2 * * * *', async () => {
-    try {
-      const { runEscalationAgent } = require('../agents/escalationAgent');
-      await runEscalationAgent();
-    } catch (err) {
-      console.error('Escalation agent cron error:', err);
-    }
-  });
-
-  console.log('Background agents scheduled: alert(1m), resource(5m), escalation(2m)');
-}
+setupScheduledJobs();
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
@@ -96,6 +75,7 @@ server.listen(PORT, () => {
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down...');
   server.close();
+  await closeQueuesAndWorkers();
   await closeDriver();
   process.exit(0);
 });

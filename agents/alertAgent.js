@@ -5,7 +5,7 @@ const { sendExpoPush } = require('../src/services/push');
 
 async function runAlertAgent() {
   const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] Alert agent running...`);
+  console.log(`[${timestamp}] SOS monitor running...`);
 
   try {
     const clusters = await detectSOSClusters();

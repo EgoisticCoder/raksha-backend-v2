@@ -5,6 +5,8 @@ const createSOSSchema = Joi.object({
   age: Joi.number().integer().min(0).max(150).default(0),
   language: Joi.string().max(10).default('en'),
   phone: Joi.string().max(20).allow('').default(''),
+  next_of_kin_name: Joi.string().max(100).allow('').default(''),
+  next_of_kin_phone: Joi.string().max(20).allow('').default(''),
   lat: Joi.number().required(),
   lng: Joi.number().required(),
   accuracy_m: Joi.number().min(0).default(0),
@@ -26,6 +28,12 @@ const teamLocationSchema = Joi.object({
   lng: Joi.number().required(),
 });
 
+const teamStatusSchema = Joi.object({
+  team_id: Joi.string().required(),
+  status: Joi.string().valid('available', 'en_route', 'on_scene', 'busy', 'returning').required(),
+  incident_id: Joi.string().allow(null),
+});
+
 const registerTokenSchema = Joi.object({
   team_id: Joi.string().required(),
   push_token: Joi.string().required(),
@@ -39,6 +47,12 @@ const sttSchema = Joi.object({
 const ttsSchema = Joi.object({
   text: Joi.string().max(2500).required(),
   language_code: Joi.string().default('hi-IN'),
+});
+
+const translateSchema = Joi.object({
+  text: Joi.string().max(2500).required(),
+  source_language_code: Joi.string().default('en-IN'),
+  target_language_code: Joi.string().default('hi-IN'),
 });
 
 function validate(schema) {
@@ -60,7 +74,9 @@ module.exports = {
   createSOSSchema,
   assignTeamSchema,
   teamLocationSchema,
+  teamStatusSchema,
   registerTokenSchema,
   sttSchema,
   ttsSchema,
+  translateSchema,
 };

@@ -24,4 +24,12 @@ const ttsLimiter = rateLimit({
   message: { error: 'TTS rate limit exceeded (30/min)' },
 });
 
-module.exports = { globalLimiter, sttLimiter, ttsLimiter };
+const translateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Translation rate limit exceeded (50/min)' },
+});
+
+module.exports = { globalLimiter, sttLimiter, ttsLimiter, translateLimiter };
