@@ -1,5 +1,5 @@
 const express = require('express');
-const { parseInboundWebhook } = require('../services/twilio');
+const { parseInboundWebhook, sendSimpleSMS } = require('../services/unifiedSMS');
 const { createSOSEvent } = require('../services/neo4j');
 const { generateIncidentId, generatePersonId } = require('../utils/incidentId');
 const { emitEvent } = require('../utils/socket');
@@ -46,7 +46,6 @@ router.post('/webhook', async (req, res) => {
 
 router.post('/send-alert', async (req, res) => {
   try {
-    const { sendSimpleSMS } = require('../services/twilio');
     const { message, phone } = req.body;
     const targetPhone = phone || process.env.SUPERVISOR_PHONE;
     if (!targetPhone) {

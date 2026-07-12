@@ -1,6 +1,6 @@
 require('dotenv').config();
 const { escalationCheck, setEscalated, getSOSById } = require('../src/services/neo4j');
-const { sendSimpleSMS, buildEscalationMessage } = require('../src/services/twilio');
+const { sendSimpleSMS, buildEscalationMessage } = require('../src/services/unifiedSMS');
 const { emitEvent } = require('../src/utils/socket');
 
 async function runEscalationAgent() {

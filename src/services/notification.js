@@ -1,4 +1,4 @@
-const { sendSMS } = require('./twilio');
+const { sendSMS } = require('./unifiedSMS');
 
 const NOTIFICATION_TYPES = {
   SOS_CREATED: 'sos_created',
