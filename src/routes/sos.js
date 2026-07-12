@@ -10,19 +10,53 @@ const {
   updateTeamStatus,
   verifySOS,
   setEscalated,
+  getAllTeams,
 } = require('../services/neo4j');
-const { classifySeverity } = require('../services/groq');
-const { calculateHeuristicScore } = require('../services/severity');
 const { uploadPhoto } = require('../services/storage');
 const { generateIncidentId, generatePersonId } = require('../utils/incidentId');
 const { emitEvent } = require('../utils/socket');
 const { validate, createSOSSchema, assignTeamSchema, teamLocationSchema, teamStatusSchema } = require('../middleware/validator');
 const { authenticateJWT, authorizeRoles, ROLES } = require('../middleware/jwt');
 const { queues } = require('../queues');
-const { NOTIFICATION_TYPES } = require('../services/notification');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+// Keyword-based disaster classification
+function classifyIncident(text) {
+  const lowerText = (text || '').toLowerCase();
+  
+  if (lowerText.includes('fire') || lowerText.includes('wildfire') || lowerText.includes('burn')) {
+    return { severity: 5, type: 'wildfire' };
+  }
+  if (lowerText.includes('flood') || lowerText.includes('water')) {
+    return { severity: 4, type: 'flood' };
+  }
+  if (lowerText.includes('earthquake') || lowerText.includes('quake') || lowerText.includes('tremor')) {
+    return { severity: 5, type: 'earthquake' };
+  }
+  if (lowerText.includes('landslide') || lowerText.includes('mudslide')) {
+    return { severity: 4, type: 'landslide' };
+  }
+  if (lowerText.includes('medical') || lowerText.includes('hurt') || lowerText.includes('injured')) {
+    return { severity: 4, type: 'medical' };
+  }
+  
+  return { severity: 3, type: 'general' };
+}
+
+// Haversine formula to calculate distance in km
+function calculateHaversineDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371; // Earth radius in km
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180; 
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2); 
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+  return R * c;
+}
 
 router.post('/', upload.single('photo'), validate(createSOSSchema), async (req, res) => {
   try {
@@ -36,23 +70,11 @@ router.post('/', upload.single('photo'), validate(createSOSSchema), async (req, 
       if (uploaded) photo_url = uploaded;
     }
 
-    let severity = data.severity;
-    let disaster_type = data.disaster_type;
-    let condition_text = data.condition_text;
-
-    if (photo_url && !severity) {
-      const vision = await classifySeverity(photo_url);
-      severity = vision.severity;
-      disaster_type = vision.disaster_type;
-      condition_text = condition_text || vision.condition_text;
-    }
-
-    // Apply heuristic severity scoring
-    const sosDataForHeuristic = {
-      condition_text,
-      disaster_type,
-    };
-    severity = calculateHeuristicScore(sosDataForHeuristic);
+    // Classify disaster from condition text
+    const classification = classifyIncident(data.condition_text);
+    const severity = data.severity || classification.severity;
+    const disaster_type = data.disaster_type || classification.type;
+    const condition_text = data.condition_text;
 
     const result = await createSOSEvent({
       ...data,
@@ -68,15 +90,6 @@ router.post('/', upload.single('photo'), validate(createSOSSchema), async (req, 
     emitEvent('new_sos', payload);
 
     await queues.routing.add('route-sos', { incident_id });
-
-    if (data.next_of_kin_phone) {
-      await queues.notification.add('send-notification', {
-        phone: data.next_of_kin_phone,
-        type: NOTIFICATION_TYPES.SOS_CREATED,
-        sos: payload.sos,
-        person: payload.person,
-      });
-    }
 
     return res.status(201).json({
       incident_id: result.incident_id,
@@ -100,6 +113,38 @@ router.get('/active', async (req, res) => {
   }
 });
 
+router.get('/:incident_id/teams', async (req, res) => {
+  try {
+    const sos = await getSOSById(req.params.incident_id);
+    if (!sos) {
+      return res.status(404).json({ error: 'SOS not found' });
+    }
+    
+    const allTeams = await getAllTeams();
+    const sosLat = sos.sos.lat;
+    const sosLng = sos.sos.lng;
+    
+    // Calculate distance for each team and sort by distance
+    const teamsWithDistance = allTeams.map(team => {
+      const distance = calculateHaversineDistance(
+        team.lat,
+        team.lng,
+        sosLat,
+        sosLng
+      );
+      return {
+        ...team,
+        distance_km: parseFloat(distance.toFixed(2))
+      };
+    }).sort((a, b) => a.distance_km - b.distance_km);
+    
+    return res.json(teamsWithDistance);
+  } catch (err) {
+    console.error('GET /sos/:incident_id/teams error:', err);
+    return res.status(500).json({ error: 'Failed to fetch teams' });
+  }
+});
+
 router.post('/:id/resolve', authenticateJWT, authorizeRoles(ROLES.VERIFIED_RESPONDER, ROLES.ADMIN, ROLES.SUPER_ADMIN), async (req, res) => {
   try {
     const sos = await markResolved(req.params.id, req.user?.id);
@@ -108,15 +153,6 @@ router.post('/:id/resolve', authenticateJWT, authorizeRoles(ROLES.VERIFIED_RESPO
     }
     const payload = await getSOSById(req.params.id);
     emitEvent('sos_updated', payload);
-    
-    if (payload.person?.next_of_kin_phone) {
-      await queues.notification.add('send-notification', {
-        phone: payload.person.next_of_kin_phone,
-        type: NOTIFICATION_TYPES.SOS_RESOLVED,
-        sos: payload.sos,
-        person: payload.person,
-      });
-    }
     
     return res.json({ success: true, sos });
   } catch (err) {
@@ -134,15 +170,6 @@ router.post('/:id/assign', authenticateJWT, authorizeRoles(ROLES.ADMIN, ROLES.SU
     const payload = await getSOSById(req.params.id);
     emitEvent('sos_updated', payload);
     
-    if (payload.person?.next_of_kin_phone) {
-      await queues.notification.add('send-notification', {
-        phone: payload.person.next_of_kin_phone,
-        type: NOTIFICATION_TYPES.SOS_ASSIGNED,
-        sos: payload.sos,
-        person: payload.person,
-      });
-    }
-    
     return res.json({ success: true, ...result });
   } catch (err) {
     console.error('POST /sos/:id/assign error:', err);
@@ -158,15 +185,6 @@ router.post('/:id/escalate', authenticateJWT, authorizeRoles(ROLES.ADMIN, ROLES.
     }
     const payload = await getSOSById(req.params.id);
     emitEvent('sos_updated', payload);
-    
-    if (payload.person?.next_of_kin_phone) {
-      await queues.notification.add('send-notification', {
-        phone: payload.person.next_of_kin_phone,
-        type: NOTIFICATION_TYPES.SOS_ESCALATED,
-        sos: payload.sos,
-        person: payload.person,
-      });
-    }
     
     return res.json({ success: true, sos });
   } catch (err) {
