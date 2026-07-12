@@ -45,16 +45,29 @@ router.post('/webhook', async (req, res) => {
 });
 
 router.post('/send-alert', async (req, res) => {
+  console.log('📨 [SMS Route] Received send-alert request:', {
+    hasPhone: !!req.body.phone,
+    hasMessage: !!req.body.message,
+    supervisorPhone: process.env.SUPERVISOR_PHONE
+  });
+  
   try {
     const { message, phone } = req.body;
     const targetPhone = phone || process.env.SUPERVISOR_PHONE;
+    
+    console.log('📞 [SMS Route] Target phone number:', targetPhone);
+    
     if (!targetPhone) {
+      console.log('❌ [SMS Route] No phone number provided or configured');
       return res.status(400).json({ error: 'No phone number provided or configured' });
     }
+    
+    console.log('📤 [SMS Route] Attempting to send SMS to:', targetPhone);
     const result = await sendSimpleSMS(targetPhone, message);
+    console.log('✅ [SMS Route] SMS result:', result);
     return res.json(result);
   } catch (err) {
-    console.error('Send alert SMS error:', err);
+    console.error('❌ [SMS Route] Send alert SMS error:', err);
     return res.status(500).json({ error: 'Failed to send alert SMS' });
   }
 });
